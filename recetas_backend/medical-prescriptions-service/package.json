@@ -1,0 +1,38 @@
+{
+  "name": "medical-prescriptions-service",
+  "version": "1.0.0",
+  "description": "Microservice for managing valid medical prescriptions.",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/medical-prescriptions-service.git"
+  },
+  "keywords": [
+    "microservice",
+    "medical",
+    "prescriptions",
+    "mongodb",
+    "express"
+  ],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.12.2",
+    "dotenv": "^8.2.0",
+    "express": "^4.17.1",
+    "mongoose": "^8.18.1",
+    "multer": "^2.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/medical-prescriptions-service/issues"
+  },
+  "homepage": "https://github.com/yourusername/medical-prescriptions-service#readme"
+}

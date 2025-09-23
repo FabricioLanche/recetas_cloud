@@ -1,0 +1,215 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "API de Recetas Médicas",
+    "version": "1.0.0",
+    "description": "Documentación de la API para gestionar recetas médicas (carga de PDF, validación, estado y archivo)."
+  },
+  "servers": [
+    { "url": "http://localhost:3000", "description": "Local" }
+  ],
+  "paths": {
+    "/api/recetas": {
+      "get": {
+        "summary": "Listar recetas con filtros y paginación",
+        "parameters": [
+          { "name": "dni", "in": "query", "schema": { "type": "string" }, "description": "DNI del paciente" },
+          { "name": "cmp", "in": "query", "schema": { "type": "string" }, "description": "CMP del médico" },
+          { "name": "estado", "in": "query", "schema": { "type": "string", "enum": ["pendiente", "validada", "rechazada"] }, "description": "Estado de validación" },
+          { "name": "fechaDesde", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Filtrar desde esta fecha de emisión (incluida)" },
+          { "name": "fechaHasta", "in": "query", "schema": { "type": "string", "format": "date-time" }, "description": "Filtrar hasta esta fecha de emisión (incluida)" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 }, "description": "Número de página (>=1)" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 }, "description": "Tamaño de página (1..100)" },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "default": "-createdAt" }, "description": "Campos de ordenación, ej: -createdAt,fechaEmision" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Listado paginado de recetas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "page": { "type": "integer" },
+                    "limit": { "type": "integer" },
+                    "total": { "type": "integer" },
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Receta" } }
+                  }
+                }
+              }
+            }
+          },
+          "500": { "description": "Error interno" }
+        }
+      }
+    },
+    "/api/recetas/upload": {
+      "post": {
+        "summary": "Subir una receta con PDF",
+        "description": "Carga el archivo PDF de la receta y los metadatos asociados. El PDF debe enviarse en el campo form-data 'archivoPDF'. Campos adicionales en form-data: pacienteDNI, medicoCMP, fechaEmision, productos (JSON)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "archivoPDF": { "type": "string", "format": "binary" },
+                  "pacienteDNI": { "type": "string", "example": "12345678" },
+                  "medicoCMP": { "type": "string", "example": "CMP12345" },
+                  "fechaEmision": { "type": "string", "format": "date-time", "example": "2025-09-01T00:00:00Z" },
+                  "productos": {
+                    "type": "string",
+                    "description": "Arreglo JSON serializado de productos",
+                    "example": "[{\"codigoProducto\":\"P001\",\"nombre\":\"Ibuprofeno\",\"cantidad\":1}]"
+                  }
+                },
+                "required": ["archivoPDF", "pacienteDNI", "medicoCMP", "fechaEmision", "productos"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Receta subida correctamente",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecetaRespuesta" } } }
+          },
+          "400": { "description": "Error de validación de entrada" },
+          "500": { "description": "Error interno" }
+        }
+      }
+    },
+    "/api/recetas/validacion/{id}": {
+      "post": {
+        "summary": "Validar receta (CMP y DNI)",
+        "parameters": [ { "$ref": "#/components/parameters/RecetaId" } ],
+        "responses": {
+          "200": { "description": "Resultado de validación", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecetaRespuesta" } } } },
+          "400": { "description": "ID inválido" },
+          "404": { "description": "Receta no encontrada" },
+          "500": { "description": "Error interno" }
+        }
+      }
+    },
+    "/api/recetas/estado/{id}": {
+      "patch": {
+        "summary": "Actualizar estado de validación",
+        "parameters": [ { "$ref": "#/components/parameters/RecetaId" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "estadoValidacion": { "type": "string", "enum": ["pendiente", "validada", "rechazada"] }
+                },
+                "required": ["estadoValidacion"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Estado actualizado", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecetaRespuesta" } } } },
+          "400": { "description": "ID o estado inválido" },
+          "404": { "description": "Receta no encontrada" },
+          "500": { "description": "Error interno" }
+        }
+      }
+    },
+    "/api/recetas/archivo/{id}": {
+      "get": {
+        "summary": "Obtener URL del PDF de la receta",
+        "parameters": [
+          { "$ref": "#/components/parameters/RecetaId" },
+          { "name": "direct", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "Devolver URL directa del archivo (si el bucket es público)" },
+          { "name": "expires", "in": "query", "schema": { "type": "integer", "default": 300 }, "description": "Segundos de expiración para URL prefirmada" }
+        ],
+        "responses": {
+          "200": {
+            "description": "URL del archivo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": { "type": "string" },
+                    "expires": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "ID inválido" },
+          "404": { "description": "Receta o archivo no encontrado" },
+          "500": { "description": "Error interno" }
+        }
+      },
+      "delete": {
+        "summary": "Eliminar archivo PDF de una receta",
+        "parameters": [ { "$ref": "#/components/parameters/RecetaId" } ],
+        "responses": {
+          "200": { "description": "Archivo eliminado", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecetaRespuesta" } } } },
+          "400": { "description": "ID inválido o no hay archivo" },
+          "404": { "description": "Receta no encontrada" },
+          "500": { "description": "Error interno" }
+        }
+      }
+    },
+    "/api/recetas/{id}": {
+      "get": {
+        "summary": "Obtener receta por ID",
+        "parameters": [ { "$ref": "#/components/parameters/RecetaId" } ],
+        "responses": {
+          "200": { "description": "Receta encontrada", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Receta" } } } },
+          "400": { "description": "ID inválido" },
+          "404": { "description": "Receta no encontrada" },
+          "500": { "description": "Error interno" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "RecetaId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "pattern": "^[0-9a-fA-F]{24}$" },
+        "description": "ID de la receta (ObjectId de MongoDB)"
+      }
+    },
+    "schemas": {
+      "Producto": {
+        "type": "object",
+        "properties": {
+          "codigoProducto": { "type": "string" },
+          "nombre": { "type": "string" },
+          "cantidad": { "type": "number", "minimum": 1 }
+        },
+        "required": ["codigoProducto", "nombre", "cantidad"]
+      },
+      "Receta": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "pacienteDNI": { "type": "string" },
+          "medicoCMP": { "type": "string" },
+          "fechaEmision": { "type": "string", "format": "date-time" },
+          "productos": { "type": "array", "items": { "$ref": "#/components/schemas/Producto" } },
+          "archivoPDF": { "type": "string" },
+          "estadoValidacion": { "type": "string", "enum": ["pendiente", "validada", "rechazada"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RecetaRespuesta": {
+        "type": "object",
+        "properties": {
+          "mensaje": { "type": "string" },
+          "receta": { "$ref": "#/components/schemas/Receta" }
+        }
+      }
+    }
+  }
+}
