@@ -24,12 +24,12 @@ mongoose.connect(dbConfig.url, dbConfig.options)
         console.error('MongoDB connection error:', err);
     });
 
+// Documentación OpenAPI (Swagger) en JSON
+app.use('/api/recetas/docs', swaggerUi.serve, swaggerUi.setup(openapi));
+
 // Rutas
 app.use('/api/recetas', recetasController);
 app.use('/api/medicos', medicosController);
-
-// Documentación OpenAPI (Swagger) en JSON
-app.use('/api/recetas/docs', swaggerUi.serve, swaggerUi.setup(openapi));
 
 // Endpoint de eco (echo): útil para pruebas de liveness del contenedor o balanceadores
 app.get('/echo', (req, res) => {
