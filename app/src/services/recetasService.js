@@ -1,21 +1,27 @@
 const Receta = require('../models/recetaModel');
-const servicioIntegracion = require('../services/integracionService');
-const Medico = require('../models/medicos');
+const Medico = require('../models/medicosModel');
+const AWS = require('aws-sdk');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
-class RecetasController {
+// Configuración S3
+const s3 = new AWS.S3({
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+    region: 'us-east-1',
+});
 
-    // Listado con filtros y paginación
+const recetasService = {
+    // Listar recetas con filtros y paginación
     async listarRecetas(req, res) {
         try {
             const {
                 dni,
                 cmp,
                 estado,
-                fechaDesde,
-                fechaHasta,
                 page = '1',
-                limit = '10',
-                sort = '-createdAt'
+                pagesize = '10'
             } = req.query;
 
             const filtro = {};
@@ -23,23 +29,11 @@ class RecetasController {
             if (cmp) filtro.medicoCMP = String(cmp);
             if (estado) filtro.estadoValidacion = String(estado);
 
-            if (fechaDesde || fechaHasta) {
-                filtro.fechaEmision = {};
-                if (fechaDesde) filtro.fechaEmision.$gte = new Date(fechaDesde);
-                if (fechaHasta) filtro.fechaEmision.$lte = new Date(fechaHasta);
-            }
-
             const pagina = Math.max(parseInt(page, 10) || 1, 1);
-            const tamano = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+            const tamano = Math.min(Math.max(parseInt(pagesize, 10) || 10, 1), 100);
 
-            // sort puede ser formato: 'campo' o '-campo'
-            const sortObj = {};
-            const camposSort = String(sort).split(',');
-            for (const campo of camposSort) {
-                const c = campo.trim();
-                if (!c) continue;
-                if (c.startsWith('-')) sortObj[c.substring(1)] = -1; else sortObj[c] = 1;
-            }
+            // Ordenar por fecha de creación descendente por defecto
+            const sortObj = { createdAt: -1 };
 
             const [items, total] = await Promise.all([
                 Receta.find(filtro)
@@ -51,36 +45,19 @@ class RecetasController {
 
             res.json({
                 page: pagina,
-                limit: tamano,
+                pagesize: tamano,
                 total,
                 items
             });
         } catch (error) {
             res.status(500).json({ error: 'Error al listar recetas', detalle: error.message });
         }
-    }
+    },
 
-    // Detalle por ID
-    async obtenerRecetaPorId(req, res) {
-        try {
-            const { id } = req.params;
-            if (!id.match(/^[0-9a-fA-F]{24}$/)) {
-                return res.status(400).json({ error: 'ID de receta inválido' });
-            }
-            const receta = await Receta.findById(id);
-            if (!receta) return res.status(404).json({ error: 'Receta no encontrada' });
-            res.json(receta);
-        } catch (error) {
-            res.status(500).json({ error: 'Error al obtener la receta', detalle: error.message });
-        }
-    }
-
+    // Subir receta PDF
     async subirReceta(req, res) {
         try {
-            // Normalizar y validar campos de entrada
             let { pacienteDNI, medicoCMP, fechaEmision, productos } = req.body;
-
-            // Multer pone el archivo en req.file
             if (!req.file) {
                 return res.status(400).json({ error: 'Falta archivo PDF (campo archivoPDF)' });
             }
@@ -137,29 +114,39 @@ class RecetasController {
                 }
             }
 
-            // Validar CMP contra la colección de médicos
+            //Validar CMP contra la colección de médicos
             const medico = await Medico.findOne({ cmp: medicoCMP, colegiaturaValida: true });
             if (!medico) {
                 return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
             }
 
             // Subir PDF a S3
-            const archivoPDF = await servicioIntegracion.subirPDFaS3(req.file);
+            const fileExtension = path.extname(req.file.originalname);
+            const fileName = `recetas/${uuidv4()}${fileExtension}`;
+            const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
+            if (!bucket) {
+                return res.status(500).json({ error: 'Falta configuración del bucket S3' });
+            }
+            const params = {
+                Bucket: bucket,
+                Key: fileName,
+                Body: req.file.buffer,
+                ContentType: req.file.mimetype,
+            };
+            const data = await s3.upload(params).promise();
+            const archivoPDF = data.Location;
 
             // Crear receta en MongoDB
             const nuevaReceta = new Receta({
                 pacienteDNI,
                 medicoCMP,
                 fechaEmision,
-                // Asegurar cantidades como número
                 productos: productos.map(p => ({
                     codigoProducto: p.codigoProducto,
                     nombre: p.nombre,
                     cantidad: Number(p.cantidad)
                 })),
-                archivoPDF,
-                // Al validar CMP con éxito, marcamos como validada
-                estadoValidacion: 'validada'
+                archivoPDF
             });
 
             await nuevaReceta.save();
@@ -167,8 +154,9 @@ class RecetasController {
         } catch (error) {
             res.status(500).json({ error: 'Error al subir la receta', detalle: error.message });
         }
-    }
+    },
 
+    // Colapsa validación y actualización de estado en un solo método (PUT)
     async actualizarEstadoReceta(req, res) {
         try {
             const recetaId = req.params.id;
@@ -192,34 +180,9 @@ class RecetasController {
         } catch (error) {
             res.status(500).json({ error: 'Error al actualizar el estado', detalle: error.message });
         }
-    }
+    },
 
-    // Obtener URL del archivo PDF de una receta (devuelve presigned URL si el bucket es privado)
-    async obtenerArchivoReceta(req, res) {
-        try {
-            const recetaId = req.params.id;
-            if (!recetaId.match(/^[0-9a-fA-F]{24}$/)) {
-                return res.status(400).json({ error: 'ID de receta inválido' });
-            }
-
-            const receta = await Receta.findById(recetaId);
-            if (!receta) return res.status(404).json({ error: 'Receta no encontrada' });
-            if (!receta.archivoPDF) return res.status(404).json({ error: 'La receta no tiene archivo asociado' });
-
-            // Si se solicita explícitamente URL directa (no recomendado si el bucket es privado)
-            if (req.query.direct === 'true') {
-                return res.json({ url: receta.archivoPDF, direct: true });
-            }
-
-            // Generar URL prefirmada con expiración (por defecto 300s)
-            const expires = req.query.expires ? Number(req.query.expires) : 300;
-            const signedUrl = await servicioIntegracion.generarUrlPresignadaDescarga(receta.archivoPDF, expires);
-            return res.json({ url: signedUrl, expires });
-        } catch (error) {
-            res.status(500).json({ error: 'Error al obtener el archivo', detalle: error.message });
-        }
-    }
-        // Eliminar archivo PDF de una receta
+    // Eliminar archivo PDF de una receta
     async eliminarArchivoReceta(req, res) {
         try {
             const recetaId = req.params.id;
@@ -235,7 +198,17 @@ class RecetasController {
             }
 
             // Eliminar archivo de S3
-            await servicioIntegracion.eliminarArchivoDeS3(receta.archivoPDF);
+            const urlObj = new URL(receta.archivoPDF);
+            const key = urlObj.pathname.substring(1);
+            const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
+            if (!bucket) {
+                return res.status(500).json({ error: 'Falta configuración del bucket S3' });
+            }
+            const params = {
+                Bucket: bucket,
+                Key: key,
+            };
+            await s3.deleteObject(params).promise();
 
             // Quitar referencia en MongoDB evitando validación del campo requerido
             const recetaActualizada = await Receta.findByIdAndUpdate(
@@ -248,7 +221,42 @@ class RecetasController {
         } catch (error) {
             res.status(500).json({ error: 'Error al eliminar el archivo', detalle: error.message });
         }
-    }
-}
+    },
 
-module.exports = RecetasController;
+    async obtenerRecetaPorId(req, res) {
+        try {
+            const { id } = req.params;
+            if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+                return res.status(400).json({ error: 'ID de receta inválido' });
+            }
+            const receta = await Receta.findById(id);
+            if (!receta) return res.status(404).json({ error: 'Receta no encontrada' });
+
+            let pdfUrl = null;
+            if (receta.archivoPDF) {
+                // Generar URL prefirmada con expiración (por defecto 300s)
+                const expires = req.query.expires ? Number(req.query.expires) : 300;
+                const urlObj = new URL(receta.archivoPDF);
+                const key = urlObj.pathname.substring(1);
+                const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
+                if (bucket) {
+                    const params = {
+                        Bucket: bucket,
+                        Key: key,
+                        Expires: expires,
+                    };
+                    pdfUrl = await s3.getSignedUrlPromise('getObject', params);
+                }
+            }
+
+            res.json({
+                ...receta.toObject(),
+                pdfUrl
+            });
+        } catch (error) {
+            res.status(500).json({ error: 'Error al obtener la receta', detalle: error.message });
+        }
+    },
+};
+
+module.exports = recetasService;

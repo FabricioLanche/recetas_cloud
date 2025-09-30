@@ -1,40 +1,18 @@
-version: "3.9"
 services:
-  mongo:
-    image: mongo:6
-    container_name: mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  api:
-    build:
-      context: ./recetas_backend/medical-prescriptions-service
-      dockerfile: Dockerfile
-    container_name: medical-prescriptions-api
-    depends_on:
-      mongo:
-        condition: service_healthy
+  # Node.js/Express Backend Service
+  recetas-api:
+    build: ./app
+    container_name: pharmavida_recetas_backend
+    env_file:
+      - .env
     ports:
       - "3000:3000"
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      MONGODB_URI: mongodb://mongo:27017/medical_prescriptions
-      AWS_REGION: ${AWS_REGION}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
-      BUCKET_NAME: ${BUCKET_NAME}
-    env_file:
-      - ./recetas_backend/medical-prescriptions-service/.env
     restart: unless-stopped
-
-volumes:
-  mongo_data:
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
