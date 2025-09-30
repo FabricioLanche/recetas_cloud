@@ -10,8 +10,8 @@ COPY package*.json ./
 # Instalar dependencias
 RUN npm ci --only=production
 
-# Copiar el código de la aplicación
-COPY . .
+# Copiar el código de la aplicación (ahora directamente desde src)
+COPY src ./src
 
 # Crear usuario no-root para seguridad
 RUN addgroup -g 1001 -S nodejs && \

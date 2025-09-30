@@ -1,7 +1,7 @@
 services:
   # Node.js/Express Backend Service
   recetas-api:
-    build: ./app
+    build: .
     container_name: pharmavida_recetas_backend
     env_file:
       - .env
