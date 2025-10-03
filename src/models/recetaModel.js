@@ -1,9 +1,9 @@
 const mongoose = require('mongoose');
 
 const productoSchema = new mongoose.Schema({
-  codigoProducto: String,
-  nombre: String,
-  cantidad: Number
+  id: { type: Number, required: true },
+  nombre: { type: String, required: true },
+  cantidad: { type: Number, required: true }
 });
 
 const recetaSchema = new mongoose.Schema({
