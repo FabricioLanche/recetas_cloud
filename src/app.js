@@ -1,5 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const cors = require('cors'); // 1. Importar cors
 const dbConfig = require('./config/dbConfig');
 const medicosController = require('./controllers/medicosController');
 const swaggerUi = require('swagger-ui-express');
@@ -13,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
+app.use(cors()); // 2. Usar cors
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
