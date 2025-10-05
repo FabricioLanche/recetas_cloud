@@ -3,37 +3,57 @@ const Medico = require('../models/medicosModel');
 const AWS = require('aws-sdk');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const pdfParse = require('pdf-parse'); // CAMBIO: Usar pdf-parse en vez de pdf2json
 const axios = require('axios');
+require('dotenv').config();
 
 // Configuración S3
 const s3 = new AWS.S3({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     sessionToken: process.env.AWS_SESSION_TOKEN,
-    region: 'us-east-1',
+    region: process.env.AWS_REGION || 'us-west-1'
 });
 
-// Utilidad para extraer todos los campos desde el texto del PDF
-async function extraerCamposDesdePDF(buffer) {
-    const result = await pdfParse(buffer);
-    const texto = result.text;
+// Configuración Textract
+const textract = new AWS.Textract({
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+    region: process.env.AWS_REGION || 'us-west-1'
+});
 
+// Función auxiliar para extraer texto y campos desde PDF usando Textract
+async function extraerCamposDesdePDF(buffer) {
+    const params = {
+        Document: {
+            Bytes: buffer
+        }
+    };
+
+    // Textract detectDocumentText solo soporta PDFs de hasta 5 páginas
+    const data = await textract.detectDocumentText(params).promise();
+    const texto = (data.Blocks || [])
+        .filter(block => block.BlockType === 'LINE')
+        .map(block => block.Text)
+        .join('\n');
+
+    // Regex para extraer campos
     const pacienteDNI = (texto.match(/Paciente DNI:\s*(\d{8,12})/) || [])[1];
     const medicoCMP = (texto.match(/Médico CMP:\s*([A-Za-z0-9]+)/) || [])[1];
     const fechaEmision = (texto.match(/Fecha de emisión:\s*([\d\-]+)/) || [])[1];
 
+    // Extraer productos
     const productos = [];
-    // Toma el bloque de productos
+    const productoRegex = /- Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
+    let prodMatch;
+    // Opcional: busca bloque entre 'Productos:' y 'Observaciones:'
+    let productosBloque = texto;
     const productosStart = texto.indexOf('Productos:');
-    let productosBloque = '';
     if (productosStart !== -1) {
         let productosEnd = texto.indexOf('Observaciones:', productosStart);
         if (productosEnd === -1) productosEnd = texto.length;
         productosBloque = texto.substring(productosStart, productosEnd);
     }
-    const productoRegex = /- Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
-    let prodMatch;
     while ((prodMatch = productoRegex.exec(productosBloque)) !== null) {
         productos.push({
             codigoProducto: prodMatch[1],
@@ -110,7 +130,7 @@ const recetasService = {
             await s3.upload(params).promise();
             const archivoPDF = fileName;
 
-            // Leer el PDF y extraer campos usando pdf-parse
+            // Extraer campos desde el PDF usando Textract
             const { pacienteDNI, medicoCMP, fechaEmision, productos } = await extraerCamposDesdePDF(req.file.buffer);
 
             // Validar datos extraídos
@@ -196,7 +216,7 @@ const recetasService = {
                 if (!medico) {
                     return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
                 }
-                // Leer el PDF y hacer validación básica de contenido con pdf-parse
+                // Leer el PDF y hacer validación básica de contenido con Textract
                 if (receta.archivoPDF) {
                     const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
                     const params = { Bucket: bucket, Key: receta.archivoPDF };

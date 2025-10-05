@@ -27,7 +27,6 @@
     "express": "^4.17.1",
     "mongoose": "^8.18.1",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.1.7",
     "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
