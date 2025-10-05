@@ -22,6 +22,27 @@ const textract = new AWS.Textract({
     region: process.env.AWS_REGION || 'us-west-1'
 });
 
+const AWS = require('aws-sdk');
+
+const sts = new AWS.STS({
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+    region: process.env.AWS_REGION || 'us-west-1'
+});
+
+sts.getCallerIdentity({}, function(err, data) {
+    if (err) {
+        console.error('Error getCallerIdentity:', err);
+    } else {
+        console.log('--- AWS CONTEXT ---');
+        console.log('AWS ARN:', data.Arn);
+        console.log('AWS Account:', data.Account);
+        console.log('AWS UserId:', data.UserId);
+        console.log('-------------------');
+    }
+});
+
 // Función auxiliar para extraer texto y campos desde PDF usando Textract
 async function extraerCamposDesdePDF(buffer) {
     const params = {
