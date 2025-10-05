@@ -82,7 +82,7 @@ const recetasService = {
                 return res.status(400).json({ error: 'Falta archivo PDF (campo archivoPDF)' });
             }
 
-            // 1. Subir PDF a S3
+            // Subir PDF a S3
             const fileExtension = path.extname(req.file.originalname);
             const fileName = `recetas/${uuidv4()}${fileExtension}`;
             const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
@@ -98,17 +98,17 @@ const recetasService = {
             await s3.upload(params).promise();
             const archivoPDF = fileName;
 
-            // 2. Leer el PDF y extraer campos
+            // Leer el PDF y extraer campos
             const textoPDF = await extraerTextoDePDF(req.file.buffer);
 
-            // 3. Parseo básico (ajusta los regex según formato del PDF generado)
-            const pacienteDNI = (textoPDF.match(/Paciente DNI: (\d{8,12})/) || [])[1];
-            const medicoCMP = (textoPDF.match(/Médico CMP: (\d+)/) || [])[1];
-            const fechaEmision = (textoPDF.match(/Fecha de emisión: ([\d\-]+)/) || [])[1];
+            // Parseo básico con regex tolerante
+            const pacienteDNI = (textoPDF.match(/Paciente DNI:\s*([0-9]{8,12})/) || [])[1];
+            const medicoCMP = (textoPDF.match(/Médico CMP:\s*([A-Za-z0-9]+)/) || [])[1];
+            const fechaEmision = (textoPDF.match(/Fecha de emisión:\s*([\d\-]+)/) || [])[1];
 
-            // Productos: busca líneas tipo "- Código: 001, Nombre: Paracetamol, Cantidad: 20"
+            // Nuevo regex para productos
             const productos = [];
-            const productoRegex = /- Código: (\w+), Nombre: ([^,]+), Cantidad: (\d+)/g;
+            const productoRegex = /-\s*Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
             let prodMatch;
             while ((prodMatch = productoRegex.exec(textoPDF)) !== null) {
                 productos.push({
@@ -118,12 +118,12 @@ const recetasService = {
                 });
             }
 
-            // 4. Validar datos extraídos
+            // Validar datos extraídos
             if (!pacienteDNI || !medicoCMP || !fechaEmision || productos.length === 0) {
                 return res.status(400).json({ error: 'No se encontraron todos los campos requeridos en el PDF', detalle: { pacienteDNI, medicoCMP, fechaEmision, productos } });
             }
 
-            // 5. Crear entrada en MongoDB
+            // Crear entrada en MongoDB
             const nuevaReceta = new Receta({
                 pacienteDNI,
                 medicoCMP,
