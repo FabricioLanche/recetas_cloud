@@ -220,18 +220,13 @@ const recetasService = {
                 return res.status(400).json({ error: 'No hay archivo para eliminar' });
             }
 
-            // Eliminar archivo de S3
-            const urlObj = new URL(receta.archivoPDF);
-            const key = urlObj.pathname.substring(1);
+            const key = receta.archivoPDF;
             const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
             if (!bucket) {
                 return res.status(500).json({ error: 'Falta configuración del bucket S3' });
             }
-            const params = {
-                Bucket: bucket,
-                Key: key,
-            };
-            await s3.deleteObject(params).promise();
+            const params = { Bucket: bucket, Key: key };
+            await s3.deleteObject(params).promise();;
 
             // Quitar referencia en MongoDB evitando validación del campo requerido
             const recetaActualizada = await Receta.findByIdAndUpdate(
@@ -257,10 +252,7 @@ const recetasService = {
 
             let pdfUrl = null;
             if (receta.archivoPDF) {
-                // Generar URL prefirmada con expiración (por defecto 300s)
-                const expires = req.query.expires ? Number(req.query.expires) : 300;
-                const urlObj = new URL(receta.archivoPDF);
-                const key = urlObj.pathname.substring(1);
+                const key = receta.archivoPDF;
                 const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
                 if (bucket) {
                     const params = {
@@ -271,6 +263,7 @@ const recetasService = {
                     pdfUrl = await s3.getSignedUrlPromise('getObject', params);
                 }
             }
+
 
             res.json({
                 ...receta.toObject(),
