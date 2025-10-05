@@ -158,83 +158,72 @@ const recetasService = {
         }
     },
 
-    async actualizarEstadoReceta(req, res) {
+    async validarRecetaPorId(req, res) {
         try {
             const recetaId = req.params.id;
-            const { estadoValidacion, pacienteDNI, medicoCMP, fechaEmision, productos } = req.body;
 
             if (!recetaId.match(/^[0-9a-fA-F]{24}$/)) {
                 return res.status(400).json({ error: 'ID de receta inválido' });
             }
-            if (!['pendiente', 'validada', 'rechazada'].includes(estadoValidacion)) {
-                return res.status(400).json({ error: 'Estado de validación inválido' });
-            }
 
-            // Buscar receta y su PDF
+            // Buscar la receta por id (reutilizando la lógica)
             const receta = await Receta.findById(recetaId);
             if (!receta) return res.status(404).json({ error: 'Receta no encontrada' });
 
-            // Validaciones de la lógica de negocio
-            if (estadoValidacion === 'validada') {
-                // Validar campos de receta
-                if (!pacienteDNI || typeof pacienteDNI !== 'string' || pacienteDNI.length < 8  || pacienteDNI.length > 12) {
-                    return res.status(400).json({ error: 'pacienteDNI inválido (debe ser string de 8-12 dígitos)' });
-                }
-                if (!medicoCMP || typeof medicoCMP !== 'string') {
-                    return res.status(400).json({ error: 'medicoCMP inválido' });
-                }
-                if (!fechaEmision || isNaN(Date.parse(fechaEmision))) {
-                    return res.status(400).json({ error: 'fechaEmision inválida (ISO 8601 o fecha parseable)' });
-                }
-                if (!Array.isArray(productos) || productos.length === 0) {
-                    return res.status(400).json({ error: 'productos debe ser un arreglo no vacío' });
-                }
-                // Regla de validez
-                const emision = new Date(fechaEmision);
-                const ahora = new Date();
-                if (emision > ahora) {
-                    return res.status(400).json({ error: 'La fecha de emisión no puede ser futura' });
-                }
-                const msPorDia = 24 * 60 * 60 * 1000;
-                const diasTranscurridos = Math.floor((ahora - emision) / msPorDia);
-                const VALIDEZ_DIAS = Number(process.env.RECETA_VALIDEZ_DIAS || 30);
-                if (diasTranscurridos > VALIDEZ_DIAS) {
-                    return res.status(400).json({ error: `La receta ha expirado (validez ${VALIDEZ_DIAS} días)` });
-                }
-                // Validar productos
-                for (const prod of productos) {
-                    if (
-                        typeof prod.id !== 'number' ||
-                        !prod.nombre || typeof prod.nombre !== 'string' ||
-                        typeof prod.cantidad !== 'number' || prod.cantidad <= 0
-                    ) {
-                        return res.status(400).json({ error: 'Producto inválido en la receta' });
-                    }
-                }
-                // Validar CMP
-                const medico = await Medico.findOne({ cmp: medicoCMP, colegiaturaValida: true });
-                if (!medico) {
-                    return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
-                }
-                // Leer el PDF y hacer validación básica de contenido con Textract
-                if (receta.archivoPDF) {
-                    const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
-                    const params = { Bucket: bucket, Key: receta.archivoPDF };
-                    const pdfUrl = await s3.getSignedUrlPromise('getObject', params);
+            if (!receta.archivoPDF) {
+                return res.status(400).json({ error: 'La receta no tiene archivo PDF asociado.' });
+            }
 
-                    const pdfBuffer = (await axios.get(pdfUrl, { responseType: 'arraybuffer' })).data;
-                    const { pacienteDNI: pdfDNI, medicoCMP: pdfCMP } = await extraerCamposDesdePDF(pdfBuffer);
+            // Descargar el PDF desde S3
+            const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
+            const params = { Bucket: bucket, Key: receta.archivoPDF };
+            const pdfBuffer = (await axios.get(await s3.getSignedUrlPromise('getObject', params), { responseType: 'arraybuffer' })).data;
 
-                    if (!pdfDNI || !pdfCMP) {
-                        return res.status(400).json({ error: 'El PDF parece vacío o incompleto' });
-                    }
-                    if (pdfDNI !== pacienteDNI || pdfCMP !== medicoCMP) {
-                        return res.status(400).json({ error: 'El PDF no contiene DNI/CMP esperados' });
-                    }
+            // Extraer los campos desde el PDF usando Textract
+            const { pacienteDNI, medicoCMP, fechaEmision, productos } = await extraerCamposDesdePDF(pdfBuffer, textract);
+
+            // Validar los campos extraídos
+            if (
+                !pacienteDNI ||
+                !medicoCMP ||
+                !fechaEmision ||
+                !Array.isArray(productos) ||
+                productos.length === 0
+            ) {
+                return res.status(400).json({ error: 'PDF incompleto o inválido', detalle: { pacienteDNI, medicoCMP, fechaEmision, productos } });
+            }
+
+            // Validar productos (id, nombre, cantidad)
+            for (const prod of productos) {
+                if (
+                    typeof prod.id !== 'number' ||
+                    !prod.nombre || typeof prod.nombre !== 'string' ||
+                    typeof prod.cantidad !== 'number' || prod.cantidad <= 0
+                ) {
+                    return res.status(400).json({ error: 'Producto inválido en el PDF', detalle: prod });
                 }
             }
 
-            // Actualiza receta con los nuevos datos y estado
+            // Validar CMP en la base de datos
+            const medico = await Medico.findOne({ cmp: medicoCMP, colegiaturaValida: true });
+            if (!medico) {
+                return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
+            }
+
+            // Regla de validez temporal
+            const emision = new Date(fechaEmision);
+            const ahora = new Date();
+            if (emision > ahora) {
+                return res.status(400).json({ error: 'La fecha de emisión no puede ser futura' });
+            }
+            const msPorDia = 24 * 60 * 60 * 1000;
+            const diasTranscurridos = Math.floor((ahora - emision) / msPorDia);
+            const VALIDEZ_DIAS = Number(process.env.RECETA_VALIDEZ_DIAS || 30);
+            if (diasTranscurridos > VALIDEZ_DIAS) {
+                return res.status(400).json({ error: `La receta ha expirado (validez ${VALIDEZ_DIAS} días)` });
+            }
+
+            // Actualiza la receta en la base de datos con los datos extraídos y estado validada
             const recetaActualizada = await Receta.findByIdAndUpdate(
                 recetaId,
                 {
@@ -242,13 +231,14 @@ const recetasService = {
                     medicoCMP,
                     fechaEmision,
                     productos,
-                    estadoValidacion
+                    estadoValidacion: 'validada'
                 },
                 { new: true, runValidators: true }
             );
-            res.json({ mensaje: 'Estado actualizado', receta: recetaActualizada });
+
+            res.json({ mensaje: 'Receta validada y actualizada correctamente', receta: recetaActualizada });
         } catch (error) {
-            res.status(500).json({ error: 'Error al actualizar el estado', detalle: error.message });
+            res.status(500).json({ error: 'Error al validar la receta', detalle: error.message });
         }
     },
 

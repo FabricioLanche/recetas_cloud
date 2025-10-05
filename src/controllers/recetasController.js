@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const recetasService = require('../services/recetasService');
-const {listarMedicos} = require("../services/recetasService");
 
 const almacenamiento = multer.memoryStorage();
 const cargador = multer({
@@ -35,7 +34,7 @@ router.get('/filter', recetasService.listarRecetas);
 router.post('/upload', manejarCarga, recetasService.subirReceta);
 
 // Colapsa validación y actualización de estado en PUT
-router.put('/estado/:id', recetasService.actualizarEstadoReceta);
+router.put('/recetas/:id/validar', recetasService.validarRecetaPorId);
 
 // Eliminar archivo PDF de una receta
 router.delete('/archivo/:id', recetasService.eliminarArchivoReceta);
