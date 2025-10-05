@@ -95,8 +95,8 @@ const recetasService = {
                 Body: req.file.buffer,
                 ContentType: req.file.mimetype,
             };
-            const data = await s3.upload(params).promise();
-            const archivoPDF = data.Location;
+            await s3.upload(params).promise();
+            const archivoPDF = fileName;
 
             // Crear entrada básica en MongoDB, solo con archivoPDF
             const nuevaReceta = new Receta({
@@ -171,7 +171,11 @@ const recetasService = {
                 }
                 // Leer el PDF y hacer validación básica de contenido con pdf2json
                 if (receta.archivoPDF) {
-                    const pdfBuffer = (await axios.get(receta.archivoPDF, { responseType: 'arraybuffer' })).data;
+                    const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
+                    const params = { Bucket: bucket, Key: receta.archivoPDF, Expires: 300 };
+                    const pdfUrl = await s3.getSignedUrlPromise('getObject', params);
+
+                    const pdfBuffer = (await axios.get(pdfUrl, { responseType: 'arraybuffer' })).data;
                     const textoPDF = await extraerTextoDePDF(pdfBuffer);
 
                     if (!textoPDF || textoPDF.length < 20) {
