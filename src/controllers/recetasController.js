@@ -32,10 +32,7 @@ const manejarCarga = (req, res, next) => {
 router.get('/filter', recetasService.listarRecetas);
 
 // Subir PDF
-router.post('/upload', (req, res, next) => {
-    console.log('Request recibida en /recetas/upload');
-    next();
-}, manejarCarga, recetasService.subirReceta);
+router.post('/upload', manejarCarga, recetasService.subirReceta);
 
 // Colapsa validación y actualización de estado en PUT
 router.put('/estado/:id', recetasService.actualizarEstadoReceta);
