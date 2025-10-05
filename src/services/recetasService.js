@@ -22,27 +22,8 @@ const textract = new AWS.Textract({
     region: 'us-east-1'
 });
 
-const sts = new AWS.STS({
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    sessionToken: process.env.AWS_SESSION_TOKEN,
-    region: 'us-east-1'
-});
-
-sts.getCallerIdentity({}, function(err, data) {
-    if (err) {
-        console.error('Error getCallerIdentity:', err);
-    } else {
-        console.log('--- AWS CONTEXT ---');
-        console.log('AWS ARN:', data.Arn);
-        console.log('AWS Account:', data.Account);
-        console.log('AWS UserId:', data.UserId);
-        console.log('-------------------');
-    }
-});
-
 // Función auxiliar para extraer texto y campos desde PDF usando Textract
-async function extraerCamposDesdePDF(buffer) {
+async function extraerCamposDesdePDF(buffer, textract) {
     const params = {
         Document: {
             Bytes: buffer
@@ -56,26 +37,26 @@ async function extraerCamposDesdePDF(buffer) {
         .map(block => block.Text)
         .join('\n');
 
-    // Regex para extraer campos
+    // Regex para extraer campos principales
     const pacienteDNI = (texto.match(/Paciente DNI:\s*(\d{8,12})/) || [])[1];
     const medicoCMP = (texto.match(/Médico CMP:\s*([A-Za-z0-9]+)/) || [])[1];
     const fechaEmision = (texto.match(/Fecha de emisión:\s*([\d\-]+)/) || [])[1];
 
-    // Extraer productos
+    // Extraer productos del bloque Productos
     const productos = [];
-    const productoRegex = /- Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
-    let prodMatch;
-    // Opcional: busca bloque entre 'Productos:' y 'Observaciones:'
-    let productosBloque = texto;
     const productosStart = texto.indexOf('Productos:');
+    let productosBloque = '';
     if (productosStart !== -1) {
         let productosEnd = texto.indexOf('Observaciones:', productosStart);
         if (productosEnd === -1) productosEnd = texto.length;
         productosBloque = texto.substring(productosStart, productosEnd);
     }
+    // Regex exacto para tu formato
+    const productoRegex = /- Código:\s*(\d+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
+    let prodMatch;
     while ((prodMatch = productoRegex.exec(productosBloque)) !== null) {
         productos.push({
-            codigoProducto: prodMatch[1],
+            id: Number(prodMatch[1]),              // Código como id (number)
             nombre: prodMatch[2].trim(),
             cantidad: Number(prodMatch[3])
         });
@@ -150,7 +131,7 @@ const recetasService = {
             const archivoPDF = fileName;
 
             // Extraer campos desde el PDF usando Textract
-            const { pacienteDNI, medicoCMP, fechaEmision, productos } = await extraerCamposDesdePDF(req.file.buffer);
+            const { pacienteDNI, medicoCMP, fechaEmision, productos } = await extraerCamposDesdePDF(req.file.buffer, textract);
 
             // Validar datos extraídos
             if (!pacienteDNI || !medicoCMP || !fechaEmision || productos.length === 0) {
@@ -223,9 +204,9 @@ const recetasService = {
                 // Validar productos
                 for (const prod of productos) {
                     if (
-                        !prod.codigoProducto || typeof prod.codigoProducto !== 'string' ||
+                        typeof prod.id !== 'number' ||
                         !prod.nombre || typeof prod.nombre !== 'string' ||
-                        (typeof prod.cantidad !== 'number' && typeof prod.cantidad !== 'string') || Number(prod.cantidad) <= 0
+                        typeof prod.cantidad !== 'number' || prod.cantidad <= 0
                     ) {
                         return res.status(400).json({ error: 'Producto inválido en la receta' });
                     }
