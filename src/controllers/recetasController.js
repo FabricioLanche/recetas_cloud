@@ -34,7 +34,7 @@ router.get('/filter', recetasService.listarRecetas);
 router.post('/upload', manejarCarga, recetasService.subirReceta);
 
 // Colapsa validación y actualización de estado en PUT
-router.put('/recetas/:id/validar', recetasService.validarRecetaPorId);
+router.put('/:id/validar', recetasService.validarRecetaPorId);
 
 // Eliminar archivo PDF de una receta
 router.delete('/archivo/:id', recetasService.eliminarArchivoReceta);
