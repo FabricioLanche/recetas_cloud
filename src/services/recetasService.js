@@ -7,11 +7,11 @@ const axios = require('axios');
 require('dotenv').config();
 
 // Configuración S3
-const s3 = new AWS.S3({
+const textract = new AWS.Textract({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     sessionToken: process.env.AWS_SESSION_TOKEN,
-    region: process.env.AWS_REGION || 'us-west-1'
+    region: 'us-east-1'
 });
 
 // Configuración Textract
@@ -19,16 +19,14 @@ const textract = new AWS.Textract({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     sessionToken: process.env.AWS_SESSION_TOKEN,
-    region: process.env.AWS_REGION || 'us-west-1'
+    region: 'us-east-1'
 });
-
-const AWS = require('aws-sdk');
 
 const sts = new AWS.STS({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     sessionToken: process.env.AWS_SESSION_TOKEN,
-    region: process.env.AWS_REGION || 'us-west-1'
+    region: 'us-east-1'
 });
 
 sts.getCallerIdentity({}, function(err, data) {
