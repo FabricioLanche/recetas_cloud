@@ -3,7 +3,7 @@ const Medico = require('../models/medicosModel');
 const AWS = require('aws-sdk');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const PDFParser = require("pdf2json");
+const pdfParse = require('pdf-parse'); // CAMBIO: Usar pdf-parse en vez de pdf2json
 const axios = require('axios');
 
 // Configuración S3
@@ -14,23 +14,35 @@ const s3 = new AWS.S3({
     region: 'us-east-1',
 });
 
-function extraerTextoDePDF(buffer) {
-    return new Promise((resolve, reject) => {
-        const pdfParser = new PDFParser();
-        pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
-        pdfParser.on("pdfParser_dataReady", pdfData => {
-            let texto = "";
-            if (pdfData && pdfData.formImage && pdfData.formImage.Pages) {
-                pdfData.formImage.Pages.forEach(page => {
-                    page.Texts.forEach(text =>
-                        texto += decodeURIComponent(text.R[0].T) + " "
-                    );
-                });
-            }
-            resolve(texto.trim());
+// Utilidad para extraer todos los campos desde el texto del PDF
+async function extraerCamposDesdePDF(buffer) {
+    const result = await pdfParse(buffer);
+    const texto = result.text;
+
+    const pacienteDNI = (texto.match(/Paciente DNI:\s*(\d{8,12})/) || [])[1];
+    const medicoCMP = (texto.match(/Médico CMP:\s*([A-Za-z0-9]+)/) || [])[1];
+    const fechaEmision = (texto.match(/Fecha de emisión:\s*([\d\-]+)/) || [])[1];
+
+    const productos = [];
+    // Toma el bloque de productos
+    const productosStart = texto.indexOf('Productos:');
+    let productosBloque = '';
+    if (productosStart !== -1) {
+        let productosEnd = texto.indexOf('Observaciones:', productosStart);
+        if (productosEnd === -1) productosEnd = texto.length;
+        productosBloque = texto.substring(productosStart, productosEnd);
+    }
+    const productoRegex = /- Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
+    let prodMatch;
+    while ((prodMatch = productoRegex.exec(productosBloque)) !== null) {
+        productos.push({
+            codigoProducto: prodMatch[1],
+            nombre: prodMatch[2].trim(),
+            cantidad: Number(prodMatch[3])
         });
-        pdfParser.parseBuffer(buffer);
-    });
+    }
+
+    return { pacienteDNI, medicoCMP, fechaEmision, productos };
 }
 
 const recetasService = {
@@ -98,29 +110,15 @@ const recetasService = {
             await s3.upload(params).promise();
             const archivoPDF = fileName;
 
-            // Leer el PDF y extraer campos
-            const textoPDF = await extraerTextoDePDF(req.file.buffer);
-
-            // Parseo básico con regex tolerante
-            const pacienteDNI = (textoPDF.match(/Paciente DNI:\s*([0-9]{8,12})/) || [])[1];
-            const medicoCMP = (textoPDF.match(/Médico CMP:\s*([A-Za-z0-9]+)/) || [])[1];
-            const fechaEmision = (textoPDF.match(/Fecha de emisión:\s*([\d\-]+)/) || [])[1];
-
-            // Nuevo regex para productos
-            const productos = [];
-            const productoRegex = /-\s*Código:\s*([^\s,]+),\s*Nombre:\s*([^,]+),\s*Cantidad:\s*(\d+)/g;
-            let prodMatch;
-            while ((prodMatch = productoRegex.exec(textoPDF)) !== null) {
-                productos.push({
-                    codigoProducto: prodMatch[1],
-                    nombre: prodMatch[2].trim(),
-                    cantidad: Number(prodMatch[3])
-                });
-            }
+            // Leer el PDF y extraer campos usando pdf-parse
+            const { pacienteDNI, medicoCMP, fechaEmision, productos } = await extraerCamposDesdePDF(req.file.buffer);
 
             // Validar datos extraídos
             if (!pacienteDNI || !medicoCMP || !fechaEmision || productos.length === 0) {
-                return res.status(400).json({ error: 'No se encontraron todos los campos requeridos en el PDF', detalle: { pacienteDNI, medicoCMP, fechaEmision, productos } });
+                return res.status(400).json({
+                    error: 'No se encontraron todos los campos requeridos en el PDF',
+                    detalle: { pacienteDNI, medicoCMP, fechaEmision, productos }
+                });
             }
 
             // Crear entrada en MongoDB
@@ -198,19 +196,19 @@ const recetasService = {
                 if (!medico) {
                     return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
                 }
-                // Leer el PDF y hacer validación básica de contenido con pdf2json
+                // Leer el PDF y hacer validación básica de contenido con pdf-parse
                 if (receta.archivoPDF) {
                     const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
                     const params = { Bucket: bucket, Key: receta.archivoPDF };
                     const pdfUrl = await s3.getSignedUrlPromise('getObject', params);
 
                     const pdfBuffer = (await axios.get(pdfUrl, { responseType: 'arraybuffer' })).data;
-                    const textoPDF = await extraerTextoDePDF(pdfBuffer);
+                    const { pacienteDNI: pdfDNI, medicoCMP: pdfCMP } = await extraerCamposDesdePDF(pdfBuffer);
 
-                    if (!textoPDF || textoPDF.length < 20) {
+                    if (!pdfDNI || !pdfCMP) {
                         return res.status(400).json({ error: 'El PDF parece vacío o incompleto' });
                     }
-                    if (!textoPDF.includes(pacienteDNI) || !textoPDF.includes(medicoCMP)) {
+                    if (pdfDNI !== pacienteDNI || pdfCMP !== medicoCMP) {
                         return res.status(400).json({ error: 'El PDF no contiene DNI/CMP esperados' });
                     }
                 }
@@ -287,7 +285,6 @@ const recetasService = {
                     const params = {
                         Bucket: bucket,
                         Key: key
-                        // Eliminamos Expires
                     };
                     pdfUrl = await s3.getSignedUrlPromise('getObject', params);
                 }
