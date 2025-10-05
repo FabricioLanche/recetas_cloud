@@ -172,7 +172,7 @@ const recetasService = {
                 // Leer el PDF y hacer validación básica de contenido con pdf2json
                 if (receta.archivoPDF) {
                     const bucket = process.env.AWS_S3_BUCKET || process.env.BUCKET_NAME;
-                    const params = { Bucket: bucket, Key: receta.archivoPDF, Expires: 300 };
+                    const params = { Bucket: bucket, Key: receta.archivoPDF };
                     const pdfUrl = await s3.getSignedUrlPromise('getObject', params);
 
                     const pdfBuffer = (await axios.get(pdfUrl, { responseType: 'arraybuffer' })).data;
@@ -226,7 +226,7 @@ const recetasService = {
                 return res.status(500).json({ error: 'Falta configuración del bucket S3' });
             }
             const params = { Bucket: bucket, Key: key };
-            await s3.deleteObject(params).promise();;
+            await s3.deleteObject(params).promise();
 
             // Quitar referencia en MongoDB evitando validación del campo requerido
             const recetaActualizada = await Receta.findByIdAndUpdate(
@@ -257,13 +257,12 @@ const recetasService = {
                 if (bucket) {
                     const params = {
                         Bucket: bucket,
-                        Key: key,
-                        Expires: expires,
+                        Key: key
+                        // Eliminamos Expires
                     };
                     pdfUrl = await s3.getSignedUrlPromise('getObject', params);
                 }
             }
-
 
             res.json({
                 ...receta.toObject(),
