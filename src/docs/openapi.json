@@ -179,6 +179,19 @@
           "404": { "description": "Receta no encontrada" },
           "500": { "description": "Error interno" }
         }
+      },
+      "put": {
+        "summary": "Validar receta y actualizarla con los datos extraídos del PDF",
+        "parameters": [ { "$ref": "#/components/parameters/RecetaId" } ],
+        "responses": {
+          "200": {
+            "description": "Receta validada y actualizada correctamente",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RecetaRespuesta" } } }
+          },
+          "400": { "description": "ID inválido o PDF incompleto" },
+          "404": { "description": "Receta no encontrada" },
+          "500": { "description": "Error interno" }
+        }
       }
     }
   },
@@ -196,11 +209,11 @@
       "Producto": {
         "type": "object",
         "properties": {
-          "codigoProducto": { "type": "string" },
+          "id": { "type": "number" },
           "nombre": { "type": "string" },
           "cantidad": { "type": "number", "minimum": 1 }
         },
-        "required": ["codigoProducto", "nombre", "cantidad"]
+        "required": ["id", "nombre", "cantidad"]
       },
       "Receta": {
         "type": "object",
