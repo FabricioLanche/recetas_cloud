@@ -3,7 +3,7 @@ const Medico = require('../models/medicosModel');
 const AWS = require('aws-sdk');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const pdfParse = require('pdf-parse');
+const PDFParser = require("pdf2json");
 const axios = require('axios');
 
 // Configuración S3
@@ -13,6 +13,25 @@ const s3 = new AWS.S3({
     sessionToken: process.env.AWS_SESSION_TOKEN,
     region: 'us-east-1',
 });
+
+function extraerTextoDePDF(buffer) {
+    return new Promise((resolve, reject) => {
+        const pdfParser = new PDFParser();
+        pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
+        pdfParser.on("pdfParser_dataReady", pdfData => {
+            let texto = "";
+            if (pdfData && pdfData.formImage && pdfData.formImage.Pages) {
+                pdfData.formImage.Pages.forEach(page => {
+                    page.Texts.forEach(text =>
+                        texto += decodeURIComponent(text.R[0].T) + " "
+                    );
+                });
+            }
+            resolve(texto.trim());
+        });
+        pdfParser.parseBuffer(buffer);
+    });
+}
 
 const recetasService = {
     // Listar recetas con filtros y paginación
@@ -92,7 +111,6 @@ const recetasService = {
         }
     },
 
-    // Colapsa validación y actualización de estado en un solo método (PUT)
     async actualizarEstadoReceta(req, res) {
         try {
             const recetaId = req.params.id;
@@ -151,17 +169,15 @@ const recetasService = {
                 if (!medico) {
                     return res.status(400).json({ error: 'CMP no registrado o colegiatura no válida' });
                 }
-                // Leer el PDF y hacer validación básica de contenido
+                // Leer el PDF y hacer validación básica de contenido con pdf2json
                 if (receta.archivoPDF) {
-                    // Descarga el PDF de la URL pública
                     const pdfBuffer = (await axios.get(receta.archivoPDF, { responseType: 'arraybuffer' })).data;
-                    const pdfData = await pdfParse(pdfBuffer);
-                    // Aquí puedes hacer validaciones sobre el contenido del PDF, ejemplo:
-                    if (!pdfData.text || pdfData.text.length < 20) {
+                    const textoPDF = await extraerTextoDePDF(pdfBuffer);
+
+                    if (!textoPDF || textoPDF.length < 20) {
                         return res.status(400).json({ error: 'El PDF parece vacío o incompleto' });
                     }
-                    // Opcional: validación de presencia de campos
-                    if (!pdfData.text.includes(pacienteDNI) || !pdfData.text.includes(medicoCMP)) {
+                    if (!textoPDF.includes(pacienteDNI) || !textoPDF.includes(medicoCMP)) {
                         return res.status(400).json({ error: 'El PDF no contiene DNI/CMP esperados' });
                     }
                 }
